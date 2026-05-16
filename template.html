@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSINT Project — Russia-Ukraine Monitor</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css"/>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #080810; color: #ddd; overflow: hidden; }
+
+    /* ── SMOOTH ZOOM OVERRIDE ── */
+    .leaflet-zoom-anim .leaflet-zoom-animated {
+      transition: transform 0.3s cubic-bezier(0.1, 0, 0.25, 1) !important;
+    }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+
+    /* ════════════════════════════════
+       LOADING SCREEN
+    ════════════════════════════════ */
+    #load-screen {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #080810;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 18px;
+    }
+    .load-logo { font-size: 1.5rem; font-weight: 700; letter-spacing: 4px; color: #e0e0e0; }
+    .load-logo em { color: #f04040; font-style: normal; }
+    .load-sub { font-size: 0.75rem; color: #444; letter-spacing: 1.5px; }
+    .load-bar-wrap {
+      width: 320px; height: 3px; background: #1a1a26; border-radius: 2px; overflow: hidden;
+    }
+    .load-bar {
+      height: 100%; width: 0; background: #f04040;
+      transition: width 0.4s ease;
+      border-radius: 2px;
+    }
+    .load-msg { font-size: 0.75rem; color: #555; height: 1.2em; text-align: center; }
+
+    /* Fallback file picker (if CORS fails) */
+    #fallback-picker {
+      display: none; flex-direction: column; align-items: center; gap: 12px;
+      margin-top: 8px;
+    }
+    .load-note { font-size: 0.72rem; color: #f04040; max-width: 300px; text-align: center; line-height: 1.5; }
+    #drop-zone {
+      width: 320px; padding: 28px 20px;
+      border: 2px dashed #222; border-radius: 12px;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      cursor: pointer; transition: border-color 0.2s;
+    }
+    #drop-zone:hover, #drop-zone.dragover { border-color: #f04040; background: rgba(240,64,64,0.04); }
+    #drop-zone p { font-size: 0.8rem; color: #555; }
+    #browse-btn {
+      background: #f04040; color: #fff; border: none;
+      padding: 7px 18px; border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+    }
+    #file-input { display: none; }
+
+    /* ════════════════════════════════
+       DASHBOARD SHELL
+    ════════════════════════════════ */
+    #dashboard { display: none; flex-direction: column; height: 100vh; }
+
+    /* ── TOP BAR ── */
+    #topbar {
+      background: #0d0d18;
+      border-bottom: 1px solid #1a1a28;
+      padding: 0 12px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      min-height: 50px; flex-shrink: 0;
+      position: relative; z-index: 600;
+    }
+    .t-logo { font-size: 0.82rem; font-weight: 700; letter-spacing: 2.5px; white-space: nowrap; flex-shrink: 0; }
+    .t-logo em { color: #f04040; font-style: normal; }
+    .t-badge {
+      background: rgba(240,64,64,0.1); border: 1px solid rgba(240,64,64,0.22);
+      color: #f04040; padding: 2px 9px; border-radius: 20px;
+      font-size: 0.7rem; white-space: nowrap; flex-shrink: 0;
+    }
+    .t-sep { width: 1px; height: 20px; background: #1a1a28; flex-shrink: 0; }
+    .t-group { display: flex; align-items: center; gap: 5px; }
+    .t-label { font-size: 0.68rem; color: #444; white-space: nowrap; }
+    select, input[type="date"], input[type="text"] {
+      background: #13131f; border: 1px solid #22222f; color: #bbb;
+      padding: 3px 7px; border-radius: 5px; font-size: 0.72rem;
+      outline: none; transition: border-color 0.15s;
+      font-family: inherit;
+    }
+    select:focus, input:focus { border-color: rgba(240,64,64,0.5); }
+    input[type="date"] { width: 122px; color-scheme: dark; }
+    #t-reset {
+      background: transparent; border: 1px solid #1e1e2c; color: #555;
+      padding: 3px 10px; border-radius: 5px; cursor: pointer;
+      font-size: 0.72rem; white-space: nowrap; transition: all 0.15s;
+    }
+    #t-reset:hover { border-color: #f04040; color: #f04040; }
+
+    /* ── MAIN AREA ── */
+    #main { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+    #map { flex: 1; }
+
+    /* ── RIGHT PANEL ── */
+    #rpanel {
+      width: 290px; flex-shrink: 0;
+      background: #0d0d18;
+      border-left: 1px solid #1a1a28;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    #rp-search-wrap {
+      padding: 10px 12px 8px;
+      border-bottom: 1px solid #1a1a28;
+      flex-shrink: 0;
+    }
+    .rp-search-row {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .search-icon { color: #444; font-size: 0.85rem; flex-shrink: 0; }
+    #kw-input {
+      flex: 1; background: #13131f; border: 1px solid #22222f;
+      border-radius: 6px; color: #ccc; font-size: 0.78rem;
+      padding: 5px 8px; outline: none; transition: border-color 0.15s;
+    }
+    #kw-input:focus { border-color: rgba(240,64,64,0.5); }
+    #kw-clear {
+      display: none; background: transparent; border: none;
+      color: #444; cursor: pointer; font-size: 0.9rem; padding: 0 2px;
+      line-height: 1; transition: color 0.15s;
+    }
+    #kw-clear:hover { color: #f04040; }
+    #kw-count { font-size: 0.65rem; color: #555; margin-top: 5px; }
+
+    /* Results list */
+    #rp-results {
+      flex: 1; overflow-y: auto;
+      display: none;
+    }
+    .res-item {
+      padding: 9px 12px; border-bottom: 1px solid #111120;
+      cursor: pointer; transition: background 0.12s;
+    }
+    .res-item:hover { background: #13131f; }
+    .res-item.active { background: #13131f; border-left: 2px solid #f04040; }
+    .res-id { font-size: 0.62rem; color: #f04040; letter-spacing: 1px; }
+    .res-date { font-size: 0.8rem; font-weight: 500; color: #ccc; margin-top: 1px; }
+    .res-cat { font-size: 0.7rem; color: #666; margin-top: 2px; }
+    .res-loc { font-size: 0.68rem; color: #444; margin-top: 2px; }
+
+    /* Placeholder */
+    #rp-placeholder {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      text-align: center; color: #252535; font-size: 0.8rem; line-height: 1.8; padding: 24px;
+    }
+
+    /* Detail view */
+    #rp-detail { flex: 1; overflow-y: auto; display: none; }
+    #rp-back {
+      display: none;
+      align-items: center; gap: 6px; padding: 8px 12px;
+      font-size: 0.72rem; color: #555; cursor: pointer;
+      border-bottom: 1px solid #1a1a28;
+      transition: color 0.15s; flex-shrink: 0;
+    }
+    #rp-back:hover { color: #f04040; }
+    #rp-detail-inner { padding: 12px; }
+    .d-entry-num { font-size: 0.62rem; color: #f04040; letter-spacing: 1.5px; margin-bottom: 5px; }
+    .d-date { font-size: 1rem; font-weight: 600; color: #e0e0e0; }
+    .d-time { font-size: 0.75rem; color: #555; margin-bottom: 14px; margin-top: 1px; }
+    .d-field { margin-bottom: 11px; }
+    .d-lbl { font-size: 0.62rem; color: #3a3a5a; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+    .d-val { font-size: 0.78rem; color: #aaa; line-height: 1.5; }
+    .d-val.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.72rem; }
+    .cat-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 0.68rem; font-weight: 500; margin-right: 4px; margin-bottom: 4px;
+    }
+    .d-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      color: #f04040; text-decoration: none; font-size: 0.75rem;
+      word-break: break-all; line-height: 1.4;
+      transition: opacity 0.15s;
+    }
+    .d-link:hover { opacity: 0.75; text-decoration: underline; }
+    .d-divider { border: none; border-top: 1px solid #1a1a28; margin: 10px 0; }
+    .g-warn {
+      background: rgba(255,150,0,0.07); border: 1px solid rgba(255,150,0,0.2);
+      color: #ffa000; padding: 5px 8px; border-radius: 5px;
+      font-size: 0.68rem; margin-bottom: 10px; line-height: 1.4;
+    }
+
+    /* ── LEGEND ── */
+    #legend {
+      position: absolute; bottom: 100px; left: 12px; z-index: 500;
+      background: rgba(8,8,16,0.92); border: 1px solid #1a1a28;
+      border-radius: 8px; padding: 9px 12px;
+      backdrop-filter: blur(8px);
+      max-height: 220px; overflow-y: auto;
+      min-width: 170px;
+    }
+    .leg-title { font-size: 0.6rem; color: #333; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 7px; }
+    .leg-row {
+      display: flex; align-items: center; gap: 7px;
+      margin-bottom: 4px; cursor: pointer; user-select: none;
+      transition: opacity 0.15s;
+    }
+    .leg-row:hover { opacity: 0.8; }
+    .leg-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .leg-name { font-size: 0.68rem; color: #999; }
+    .leg-cnt { font-size: 0.6rem; color: #444; margin-left: auto; }
+    .leg-row.off .leg-name { color: #2a2a3a; }
+    .leg-row.off .leg-dot { opacity: 0.1; }
+    .leg-row.off .leg-cnt { color: #1e1e2c; }
+
+    /* ── CUSTOM ZOOM CONTROL ── */
+    .zoom-ctrl {
+      position: absolute; bottom: 100px; right: 12px; z-index: 500;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .zoom-btn {
+      width: 30px; height: 30px;
+      background: rgba(8,8,16,0.92); border: 1px solid #1a1a28;
+      border-radius: 6px; color: #aaa; font-size: 1.1rem; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; backdrop-filter: blur(8px);
+      transition: background 0.15s, color 0.15s;
+      user-select: none;
+    }
+    .zoom-btn:hover { background: rgba(240,64,64,0.15); color: #f04040; border-color: rgba(240,64,64,0.3); }
+
+    /* ── LAYER SWITCHER ── */
+    #layer-ctrl {
+      position: absolute; bottom: 30px; right: 12px; z-index: 500;
+      display: flex; flex-direction: column; gap: 2px;
+      background: rgba(8,8,16,0.92); border: 1px solid #1a1a28;
+      border-radius: 8px; padding: 6px;
+      backdrop-filter: blur(8px);
+    }
+    .layer-btn {
+      display: flex; align-items: center; gap: 7px;
+      padding: 5px 8px; border-radius: 5px; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .layer-btn:hover { background: rgba(255,255,255,0.04); }
+    .layer-btn.active { background: rgba(240,64,64,0.1); }
+    .layer-icon { font-size: 0.85rem; }
+    .layer-label { font-size: 0.68rem; color: #777; }
+    .layer-btn.active .layer-label { color: #f04040; }
+  </style>
+</head>
+<body>
+
+<!-- ════ LOADING SCREEN ════ -->
+<div id="load-screen">
+  <div class="load-logo">OSINT <em>PROJECT</em></div>
+  <div class="load-sub">Russia · Ukraine Monitor Map · CIR / Bellingcat</div>
+  <div class="load-bar-wrap"><div class="load-bar" id="load-bar"></div></div>
+  <div class="load-msg" id="load-msg">Connexion à l'API…</div>
+
+  <div id="fallback-picker">
+    <div class="load-note">Les 4 sources ont échoué (réseau restreint ou proxies momentanément saturés).<br>En dernier recours, charge le fichier local :</div>
+    <div id="drop-zone">
+      <p>Glisse <strong>eyes_on_russia_*.csv</strong> ici</p>
+      <button id="browse-btn" onclick="document.getElementById('file-input').click()">Parcourir…</button>
+    </div>
+    <input type="file" id="file-input" accept=".csv,.geojson,.json">
+  </div>
+</div>
+
+<!-- ═══ DASHBOARD ════ -->
+<div id="dashboard">
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <div class="t-logo">OSINT <em>PROJECT</em></div>
+    <div class="t-badge" id="t-badge">…</div>
+
+    <div class="t-sep"></div>
+
+    <div class="t-group">
+      <span class="t-label">Catégorie</span>
+      <select id="f-cat"><option value="">Toutes</option></select>
+    </div>
+    <div class="t-group">
+      <span class="t-label">Pays</span>
+      <select id="f-country"><option value="">Tous</option></select>
+    </div>
+
+    <div class="t-sep"></div>
+
+    <div class="t-group">
+      <span class="t-label">Du</span>
+      <input type="date" id="f-date-from">
+    </div>
+    <div class="t-group">
+      <span class="t-label">Au</span>
+      <input type="date" id="f-date-to">
+    </div>
+
+    <button id="t-reset">↺ Réinitialiser</button>
+  </div>
+
+  <!-- Map + right panel -->
+  <div id="main">
+    <div id="map"></div>
+
+    <!-- Right panel -->
+    <div id="rpanel">
+      <div id="rp-search-wrap">
+        <div class="rp-search-row">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="kw-input" placeholder="Recherche par mot-clé…">
+          <button id="kw-clear" title="Effacer">✕</button>
+        </div>
+        <div id="kw-count"></div>
+      </div>
+
+      <div id="rp-placeholder">← Clique sur un marqueur<br>ou tape un mot-clé<br>pour voir les incidents</div>
+      <div id="rp-results"></div>
+      <div id="rp-back" onclick="backToResults()">← Résultats</div>
+      <div id="rp-detail"><div id="rp-detail-inner"></div></div>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div id="legend">
+    <div class="leg-title">Catégories</div>
+    <div id="leg-items"></div>
+  </div>
+
+  <!-- Custom zoom -->
+  <div class="zoom-ctrl" id="zoom-ctrl">
+    <div class="zoom-btn" id="zoom-in" title="Zoom +">+</div>
+    <div class="zoom-btn" id="zoom-out" title="Zoom −">−</div>
+  </div>
+
+  <!-- Layer switcher -->
+  <div id="layer-ctrl">
+    <div class="layer-btn active" data-layer="dark">
+      <span class="layer-icon">🌑</span><span class="layer-label">Sombre</span>
+    </div>
+    <div class="layer-btn" data-layer="satellite">
+      <span class="layer-icon">🛰️</span><span class="layer-label">Satellite</span>
+    </div>
+    <div class="layer-btn" data-layer="terrain">
+      <span class="layer-icon">🗺️</span><span class="layer-label">Terrain</span>
+    </div>
+  </div>
+</div>
+
+<!-- Données locales pré-générées par update_osint_data.py (prioritaire, pas de CORS) -->
+<script src="osint_data.js" onerror="window._noLocalData=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script>
+
+// ════════════════════════════════════════════════════════
+//  COLOURS
+// ════════════════════════════════════════════════════════
+const PALETTE = [
+  '#f04040','#3b82f6','#22c55e','#f59e0b','#a855f7',
+  '#ec4899','#06b6d4','#84cc16','#f97316','#8b5cf6',
+  '#14b8a6','#eab308','#ef4444','#10b981','#6366f1'
+];
+const colorMap = {}, countMap = {};
+let palIdx = 0;
+
+function colorFor(cat) {
+  if (!cat) return '#555';
+  if (!colorMap[cat]) colorMap[cat] = PALETTE[palIdx++ % PALETTE.length];
+  return colorMap[cat];
+}
+
+function makeIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:9px;height:9px;background:${color};border-radius:50%;border:1.5px solid rgba(255,255,255,0.2);box-shadow:0 0 5px ${color}88"></div>`,
+    iconSize: [9,9], iconAnchor: [4.5,4.5]
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  DATE HELPERS
+// ════════════════════════════════════════════════════════
+function fmtDate(d) {
+  if (!d) return '—';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  return isNaN(dt) ? d : dt.toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' });
+}
+function fmtShortDate(d) {
+  if (!d) return '—';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  return isNaN(dt) ? d : dt.toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' });
+}
+function toISO(d) {
+  if (!d) return '';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(dt)) return '';
+  return dt.toISOString().slice(0,10);
+}
+
+// ════════════════════════════════════════════════════════
+//  GLOBALS
+// ════════════════════════════════════════════════════════
+let allData = [], filteredData = [], searchData = [];
+let mapObj, clusters, darkLayer, satelliteLayer, terrainLayer;
+let activeSet = new Set();
+let activeLayerName = 'dark';
+let lastSearchKw = '';
+let selectedResultIdx = -1;
+let lastSearchResults = [];
+
+// ════════════════════════════════════════════════════════
+//  MAP INIT
+// ════════════════════════════════════════════════════════
+function initMap() {
+  mapObj = L.map('map', {
+    center: [48.5, 32],
+    zoom: 5,
+    zoomControl: false,
+    zoomAnimation: true,
+    zoomSnap: 0.5,
+    zoomDelta: 1,
+    wheelPxPerZoomLevel: 120
+  });
+
+  darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © CARTO',
+    subdomains: 'abcd', maxZoom: 20
+  });
+  satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '© Esri',
+    maxZoom: 20
+  });
+  terrainLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 20
+  });
+
+  darkLayer.addTo(mapObj);
+
+  // Cluster group
+  clusters = L.markerClusterGroup({
+    chunkedLoading: true,
+    chunkInterval: 50,
+    maxClusterRadius: 40,
+    showCoverageOnHover: false,
+    spiderfyOnMaxZoom: true,
+    iconCreateFunction(cluster) {
+      const n = cluster.getChildCount();
+      const sz = n > 1000 ? 44 : n > 100 ? 34 : 26;
+      const lbl = n >= 1000 ? Math.round(n/1000)+'k' : n;
+      return L.divIcon({
+        className: '',
+        html: `<div style="width:${sz}px;height:${sz}px;background:rgba(240,64,64,0.85);border-radius:50%;border:2px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:${sz>34?12:10}px;font-weight:700;color:#fff;box-shadow:0 2px 10px rgba(240,64,64,0.4)">${lbl}</div>`,
+        iconSize:[sz,sz], iconAnchor:[sz/2,sz/2]
+      });
+    }
+  });
+  mapObj.addLayer(clusters);
+
+  // Zoom buttons
+  document.getElementById('zoom-in').onclick  = () => mapObj.setZoom(mapObj.getZoom()+1);
+  document.getElementById('zoom-out').onclick = () => mapObj.setZoom(mapObj.getZoom()-1);
+
+  // Layer switcher
+  document.querySelectorAll('.layer-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchLayer(btn.dataset.layer));
+  });
+
+  // Ukraine border
+  loadUkraineBorder();
+}
+
+function switchLayer(name) {
+  const layers = { dark: darkLayer, satellite: satelliteLayer, terrain: terrainLayer };
+  Object.values(layers).forEach(l => { if (mapObj.hasLayer(l)) mapObj.removeLayer(l); });
+  mapObj.addLayer(layers[name]);
+  // Push clusters back on top
+  mapObj.removeLayer(clusters);
+  mapObj.addLayer(clusters);
+
+  document.querySelectorAll('.layer-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.layer === name);
+  });
+  activeLayerName = name;
+}
+
+anync function loadUkraineBorder() {
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson');
+    const data = await r.json();
+    const ukraine = data.features.find(f => f.properties.ISO_A3 === 'UKR' || (f.properties.name||'').includes('Ukraine'));
+    if (ukraine) {
+      L.geoJSON(ukraine, {
+        style: {
+          color: '#f04040',
+          weight: 2.5,
+          opacity: 0.7,
+          fillColor: 'transparent',
+          fillOpacity: 0,
+          dashArray: null
+        },
+        interactive: false
+      }).addTo(mapObj);
+    }
+  } catch(e) {
+    // Ukraine border is optional, fail silently
+    console.warn('Ukraine border not loaded:', e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  RENDER MARKERS
+// ════════════════════════════════════════════════════════
+function renderMarkers(data) {
+  clusters.clearLayers();
+  data.forEach((row, idx) => {
+    const lat = +row.lat, lon = +row.lon;
+    if (isNaN(lat) || isNaN(lon)) return;
+    const color  = colorFor(row.primaryCat);
+    const marker = L.marker([lat, lon], { icon: makeIcon(color) });
+    marker.on('click', () => {
+      showDetail(row);
+      // highlight in results if search active
+      document.querySelectorAll('.res-item').forEach((el,i) => {
+        el.classList.toggle('active', el.dataset.rowId === String(row._idx));
+      });
+    });
+    row._marker = marker;
+    clusters.addLayer(marker);
+  });
+}
+
+function updateBadge(n) {
+  const total = allData.length;
+  document.getElementById('t-badge').textContent =
+    n === total ? `${total.toLocaleString('fr-FR')} incidents`
+                : `${n.toLocaleString('fr-FR')} / ${total.toLocaleString('fr-FR')}`;
+}
+
+// ════════════════════════════════════════════════════════
+//  DETAIL PANEL
+// ════════════════════════════════════════════════════════
+function showDetail(row) {
+  const color = colorFor(row.primaryCat);
+  const graphic = row.status && !row.status.toLowerCase().includes('none') && !row.status.toLowerCase().includes('1');
+
+  document.getElementById('rp-placeholder').style.display = 'none';
+  document.getElementById('rp-results').style.display     = 'none';
+  document.getElementById('rp-detail').style.display      = 'flex';
+  document.getElementById('rp-detail').style.flexDirection = 'column';
+
+  if (lastSearchKw) {
+    document.getElementById('rp-back').style.display = 'flex';
+  }
+
+  document.getElementById('rp-detail-inner').innerHTML = `
+    <div class="d-entry-num">${row.id || '—'}</div>
+    <div class="d-date">${fmtDate(row.date)}</div>
+    <div class="d-time">${row.date ? toISO(row.date) : ''}</div>
+
+    <div class="d-field">
+      <div class="d-lbl">Catégorie</div>
+      <span class="cat-pill" style="background:${color}18;color:${color};border:1px solid ${color}40">${row.primaryCat || '—'}</span>
+      ${row.categories.slice(1).map(c => `<span class="cat-pill" style="background:#ffffff08;color:#666;border:1px solid #222">${c}</span>`).join('')}
+    </div>
+
+    <div class="d-field">
+      <div class="d-lbl">Localisation</div>
+      <div class="d-val">${[row.city, row.district, row.province, row.country].filter(Boolean).join(' · ') || '—'}</div>
+    </div>
+
+    <div class="d-field">
+      <div class="d-lbl">Coordonnées</div>
+      <div class="d-val mono">${(+row.lat).toFixed(5)}, ${(+row.lon).toFixed(5)}</div>
+    </div>
+
+    <hr class="d-divider">
+
+    <div class="d-field">
+      <div class="d-lbl">Description</div>
+      <div class="d-val">${row.description || '—'}</div>
+    </div>
+
+    ${row.url ? `
+    <div class="d-field">
+      <div class="d-lbl">Source</div>
+      <a href="${row.url}" target="_blank" rel="noopener" class="d-link">
+        🔗 Voir la preuve originale
+      </a>
+      <div class="d-val" style="margin-top:4px;font-size:0.65rem;color:#333;word-break:break-all">${row.url}</div>
+    </div>` : ''}
+
+    <hr class="d-divider">
+
+    <div class="d-field">
+      <div class="d-lbl">Statut</div>
+      <div class="d-val">${row.status || '—'}</div>
+    </div>
+    <div class="d-field">
+      <div class="d-lbl">Crédit</div>
+      <div class="d-val">${row.credit || '—'}</div>
+    </div>
+  `;
+}
+
+function backToResults() {
+  document.getElementById('rp-back').style.display   = 'none';
+  document.getElementById('rp-detail').style.display  = 'none';
+  document.getElementById('rp-results').style.display = 'block';
+}
+
+// ════════════════════════════════════════════════════════
+//  KEYWORD SEARCH (right panel)
+// ════════════════════════════════════════════════════════
+function buildResultItem(row) {
+  const el = document.createElement('div');
+  el.className = 'res-item';
+  el.dataset.rowId = String(row._idx);
+  el.innerHTML = `
+    <div class="res-id">${row.id || '—'}</div>
+    <div class="res-date">${fmtShortDate(row.date)}</div>
+    <div class="res-cat">${row.primaryCat || '—'}</div>
+    <div class="res-loc">${[row.city, row.country].filter(Boolean).join(', ') || '—'}</div>
+  `;
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.res-item').forEach(e => e.classList.remove('active'));
+    el.classList.add('active');
+    showDetail(row);
+    // Fly to marker
+    if (!isNaN(+row.lat) && !isNaN(+row.lon)) {
+      mapObj.setView([+row.lat, +row.lon], Math.max(mapObj.getZoom(), 9), { animate: true });
+    }
+  });
+  return el;
+}
+
+let kwTimer;
+document.getElementById('kw-input').addEventListener('input', function() {
+  const kw = this.value.trim().toLowerCase();
+  document.getElementById('kw-clear').style.display = kw ? 'block' : 'none';
+  clearTimeout(kwTimer);
+  kwTimer = setTimeout(() => runKeywordSearch(kw), 200);
+});
+document.getElementById('kw-clear').addEventListener('click', () => {
+  document.getElementById('kw-input').value = '';
+  document.getElementById('kw-clear').style.display = 'none';
+  clearKeywordSearch();
+});
+
+function runKeywordSearch(kw) {
+  lastSearchKw = kw;
+  if (!kw) { clearKeywordSearch(); return; }
+
+  const results = filteredData.filter(row => {
+    const hay = [row.id, row.description, row.city, row.province, row.country,
+                 row.primaryCat, ...row.categories].join(' ').toLowerCase();
+    return hay.includes(kw);
+  });
+  lastSearchResults = results;
+
+  // Update map — show only keyword results
+  renderMarkers(results);
+  updateBadge(results.length);
+
+  // Build results list
+  const container = document.getElementById('rp-results');
+  container.innerHTML = '';
+  results.slice(0, 200).forEach(row => container.appendChild(buildResultItem(row)));
+  if (results.length > 200) {
+    const more = document.createElement('div');
+    more.style.cssText = 'padding:8px 12px;font-size:0.68rem;color:#444;text-align:center';
+    more.textContent = `+ ${(results.length-200).toLocaleString('fr-FR')} autres résultats — affinez votre recherche`;
+    container.appendChild(more);
+  }
+
+  document.getElementById('kw-count').textContent =
+    results.length === 0 ? 'Aucun résultat'
+    : `${results.length.toLocaleString('fr-FR')} incident${results.length>1?'s':''} trouvé${results.length>1?'s':''}`;
+
+  document.getElementById('rp-placeholder').style.display = 'none';
+  document.getElementById('rp-detail').style.display      = 'none';
+  document.getElementById('rp-back').style.display        = 'none';
+  document.getElementById('rp-results').style.display     = 'block';
+}
+
+function clearKeywordSearch() {
+  lastSearchKw = '';
+  lastSearchResults = [];
+  document.getElementById('kw-count').textContent = '';
+  document.getElementById('rp-results').style.display  = 'none';
+  document.getElementById('rp-detail').style.display   = 'none';
+  document.getElementById('rp-back').style.display     = 'none';
+  document.getElementById('rp-placeholder').style.display = 'flex';
+  renderMarkers(filteredData);
+  updateBadge(filteredData.length);
+}
+
+// ════════════════════════════════════════════════════════
+//  FILTERS (top bar)
+// ════════════════════════════════════════════════════════
+let filterTimer;
+function applyFilters() {
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => {
+    const cat      = document.getElementById('f-cat').value;
+    const country  = document.getElementById('f-country').value;
+    const dateFrom = document.getElementById('f-date-from').value; // "YYYY-MM-DD"
+    const dateTo   = document.getElementById('f-date-to').value;
+
+    filteredData = allData.filter(row => {
+      if (cat && row.primaryCat !== cat) return false;
+      if (country && row.country !== country) return false;
+      if (!activeSet.has(row.primaryCat) && row.primaryCat) return false;
+      if (row.dateISO) {
+        if (dateFrom && row.dateISO < dateFrom) return false;
+        if (dateTo   && row.dateISO > dateTo)   return false;
+      }
+      return true;
+    });
+
+    // Re-run keyword search on new filtered set, or just render
+    if (lastSearchKw) {
+      runKeywordSearch(lastSearchKw);
+    } else {
+      renderMarkers(filteredData);
+      updateBadge(filteredData.length);
+    }
+  }, 200);
+}
+
+document.getElementById('f-cat').addEventListener('change', applyFilters);
+document.getElementById('f-country').addEventListener('change', applyFilters);
+document.getElementById('f-date-from').addEventListener('change', applyFilters);
+document.getElementById('f-date-to').addEventListener('change', applyFilters);
+
+document.getElementById('t-reset').addEventListener('click', () => {
+  document.getElementById('f-cat').value       = '';
+  document.getElementById('f-country').value   = '';
+  document.getElementById('f-date-from').value = '';
+  document.getElementById('f-date-to').value   = '';
+  document.getElementById('kw-input').value    = '';
+  document.getElementById('kw-clear').style.display = 'none';
+  document.getElementById('kw-count').textContent   = '';
+  activeSet = new Set(Object.keys(colorMap));
+  document.querySelectorAll('.leg-row').forEach(r => r.classList.remove('off'));
+  filteredData = [...allData];
+  clearKeywordSearch();
+});
+
+// ════════════════════════════════════════════════════════
+//  LEGEND
+// ════════════════════════════════════════════════════════
+function buildLegend() {
+  const container = document.getElementById('leg-items');
+  container.innerHTML = '';
+  Object.keys(colorMap).sort().forEach(cat => {
+    const color = colorMap[cat];
+    const cnt   = countMap[cat] || 0;
+    const row   = document.createElement('div');
+    row.className  = 'leg-row';
+    row.dataset.cat = cat;
+    row.innerHTML = `
+      <div class="leg-dot" style="background:${color}"></div>
+      <div class="leg-name">${cat}</div>
+      <div class="leg-cnt">${cnt.toLocaleString('fr-FR')}</div>
+    `;
+    row.addEventListener('click', () => {
+      if (activeSet.has(cat)) { activeSet.delete(cat); row.classList.add('off'); }
+      else                    { activeSet.add(cat);    row.classList.remove('off'); }
+      applyFilters();
+    });
+    container.appendChild(row);
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  POPULATE DROPDOWNS
+// ════════════════════════════════════════════════════════
+function populateDropdowns() {
+  const cats     = [...new Set(allData.map(r => r.primaryCat).filter(Boolean))].sort();
+  const countries= [...new Set(allData.map(r => r.country).filter(Boolean))].sort();
+  const catSel = document.getElementById('f-cat');
+  const cntSel = document.getElementById('f-country');
+  cats.forEach(c => { const o=document.createElement('option'); o.value=c; o.textContent=c; catSel.appendChild(o); });
+  countries.forEach(c => { const o=document.createElement('option'); o.value=c; o.textContent=c; cntSel.appendChild(o); });
+
+  // Set default date range
+  const dates = allData.map(r=>r.dateISO).filter(Boolean).sort();
+  if (dates.length) {
+    document.getElementById('f-date-from').value = dates[0];
+    document.getElementById('f-date-to').value   = dates[dates.length-1];
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  BOOT — parse and render
+// ════════════════════════════════════════════════════════
+function boot(rows) {
+  allData = rows;
+  filteredData = [...allData];
+
+  // Count categories
+  allData.forEach((row, i) => {
+    row._idx = i;
+    colorFor(row.primaryCat);
+    if (row.primaryCat) countMap[row.primaryCat] = (countMap[row.primaryCat]||0)+1;
+  });
+  activeSet = new Set(Object.keys(colorMap));
+
+  populateDropdowns();
+  buildLegend();
+
+  document.getElementById('load-screen').style.display = 'none';
+  const dash = document.getElementById('dashboard');
+  dash.style.display = 'flex';
+
+  initMap();
+  renderMarkers(allData);
+  updateBadge(allData.length);
+}
+
+// ════════════════════════════════════════════════════════
+//  PARSE GeoJSON features → unified row format
+// ════════════════════════════════════════════════════════
+function parseGeoJSONFeatures(features) {
+  return features.map(f => {
+    const p   = f.properties || {};
+    const geo = f.geometry   || {};
+    const coords = geo.coordinates || [];
+    // GeoJSON standard: [longitude, latitude]
+    const lon = coords[0], lat = coords[1];
+    const cats = Array.isArray(p.categories) ? p.categories : (p.categories ? [p.categories] : []);
+    const primaryCat = cats[0] || p.Primary_category || p.category || '';
+    const dateStr = p.verifiedDate || p.date || '';
+    const dateISO = dateStr ? dateStr.slice(0,10) : '';
+    return {
+      id:          p.id || p.Entry_Number || '',
+      date:        dateISO,
+      dateISO:     dateISO,
+      url:         p.url || p.Link || '',
+      status:      p.status || p.Graphic_content_level || '',
+      credit:      p.credit || p.Credit || '',
+      description: p.description || p.Description || '',
+      country:     p.country || p.country || '',
+      province:    p.province || p.province || '',
+      district:    p.district || '',
+      city:        p.city || p.Town_or_City || '',
+      lat:         lat != null ? lat : p.latitude || p.latitude_geom || '',
+      lon:         lon != null ? lon : p.longitude|| p.longitude_geom|| '',
+      primaryCat:  primaryCat,
+      categories:  cats
+    };
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  PARSE CSV rows → unified row format
+// ════════════════════════════════════════════════════════
+function parseCSVRows(rows) {
+  return rows.map(r => {
+    const cats = [r.Primary_category, r.Secondary_category].filter(Boolean);
+    const ts   = r.TIMESTAMP;
+    let dateISO = '';
+    if (ts) {
+      const d = new Date(+ts);
+      if (!isNaN(d)) dateISO = d.toISOString().slice(0,10);
+    }
+    return {
+      id:          r.Entry_Number || '',
+      date:        dateISO,
+      dateISO:     dateISO,
+      url:         r.Link || '',
+      status:      r.Graphic_content_level || '',
+      credit:      r.Credit || '',
+      description: r.Description || '',
+      country:     r.country || '',
+      province:    r.province || '',
+      district:    '',
+      city:        r.Town_or_City || '',
+      lat:         r.latitude || r.latitude_geom || '',
+      lon:         r.longitude|| r.longitude_geom|| '',
+      primaryCat:  r.Primary_category || '',
+      categories:  cats
+    };
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  LOADING UI HELPERS
+// ════════════════════════════════════════════════════════
+function setProgress(pct, msg) {
+  document.getElementById('load-bar').style.width = pct + '%';
+  document.getElementById('load-msg').textContent  = msg;
+}
+function showFallback(errMsg) {
+  setProgress(0, errMsg || 'Toutes les sources ont échoué.');
+  document.getElementById('fallback-picker').style.display = 'flex';
+}
+
+// ════════════════════════════════════════════════════════
+//  LIVE FETCH — CORS proxy cascade
+//  4 proxies tentés en séquence, timeout 20s chacun.
+//  Si tous échouent → file picker en dernier recours.
+// ════════════════════════════════════════════════════════
+const SOURCE_URL = 'https://eyesonrussia.org/events.geojson';
+
+// Each function receives the raw URL and returns a fetchable URL
+const PROXY_CHAIN = [
+  // 1. Direct (works if the server relaxes CORS or future browser policy)
+  u => u,
+  // 2. corsproxy.io — fiable, sans clé
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  // 3. allorigins — backup rapide
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  // 4. cors.sh — troisième filet
+  u => `https://cors.sh/${u}`,
+];
+
+async function tryFetch(proxyUrl, timeoutMs = 20000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(proxyUrl, {
+      signal: ctrl.signal,
+      headers: { Accept: 'application/json, */*' }
+    });
+    clearTimeout(timer);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (!data || !Array.isArray(data.features) || data.features.length === 0)
+      throw new Error('Réponse vide ou format inattendu');
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadLive() {
+  for (let i = 0; i < PROXY_CHAIN.length; i++) {
+    const label = i === 0 ? 'Connexion directe…'
+                : `Source de secours ${i}/${PROXY_CHAIN.length - 1}…`;
+    const pct   = 10 + i * 18;
+    setProgress(pct, label);
+    try {
+      const data     = await tryFetch(PROXY_CHAIN[i](SOURCE_URL));
+      const features = data.features;
+      setProgress(80, `Traitement de ${features.length.toLocaleString('fr-FR')} incidents…`);
+      await new Promise(r => setTimeout(r, 50)); // let UI breathe
+      const rows = parseGeoJSONFeatures(features);
+      setProgress(100, `✓ ${rows.length.toLocaleString('fr-FR')} incidents chargés`);
+      setTimeout(() => boot(rows), 350);
+      return; // success — stop trying
+    } catch (e) {
+      console.warn(`Proxy ${i} échoué :`, e.message);
+    }
+  }
+  // All proxies failed
+  showFallback('Aucune source disponible — charge le fichier manuellement.');
+}
+
+// ════════════════════════════════════════════════════════
+//  FALLBACK — file picker (CSV or GeoJSON)
+// ════════════════════════════════════════════════════════
+function handleFile(file) {
+  if (!file) return;
+  setProgress(20, 'Lecture du fichier…');
+  document.getElementById('fallback-picker').style.display = 'none';
+
+  if (file.name.endsWith('.csv')) {
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete(res) {
+        setProgress(90, `${res.data.length.toLocaleString('fr-FR')} incidents chargés…`);
+        const rows = parseCSVRows(res.data);
+        setProgress(100, 'Prêt !');
+        setTimeout(() => boot(rows), 300);
+      },
+      error(e) { showFallback(e.message); }
+    });
+  } else {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const data = JSON.parse(e.target.result);
+        const features = data.features || [];
+        setProgress(90, `${features.length.toLocaleString('fr-FR')} incidents chargés…`);
+        const rows = parseGeoJSONFeatures(features);
+        setProgress(100, 'Prêt !');
+        setTimeout(() => boot(rows), 300);
+      } catch(err) { showFallback(err.message); }
+    };
+    reader.readAsText(file);
+  }
+}
+
+document.getElementById('file-input').addEventListener('change', e => handleFile(e.target.files[0]));
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('dragover');
+  handleFile(e.dataTransfer.files[0]);
+});
+
+// ── Start ───────────────────────────────────────────────────────────────────
+// Priorité 1 : osint_data.js généré localement par le script Python (pas de CORS)
+// Priorité 2 : fetch live via proxies CORS
+// Priorité 3 : sélecteur de fichier manuel
+
+if (window.OSINT_DATA && Array.isArray(window.OSINT_DATA) && window.OSINT_DATA.length > 0) {
+  // Données locales disponibles — chargement immédiat
+  const updated = window.OSINT_UPDATED
+    ? new Date(window.OSINT_UPDATED).toLocaleDateString('fr-FR',
+        { day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' })
+    : '';
+  setProgress(85, `Données locales trouvées${updated ? ' · ' + updated : ''}…`);
+  setTimeout(() => {
+    // Normalise le format venant du script Python (déjà bien structuré)
+    const rows = window.OSINT_DATA.map((r, i) => ({
+      ...r,
+      dateISO:    r.date || '',
+      primaryCat: (r.categories && r.categories[0]) || '',
+      _idx:       i
+    }));
+    setProgress(100, `✓ ${rows.length.toLocaleString('fr-FR')} incidents chargés`);
+    setTimeout(() => boot(rows), 300);
+  }, 200);
+} else {
+  // Pas de fichier local → tentatives CORS
+  loadLive();
+}
+
+</script>
+</body>
+</html>
