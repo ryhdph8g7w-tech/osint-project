@@ -275,7 +275,7 @@
   </div>
 </div>
 
-<!-- ═══╔ DASHBOARD ════ -->
+<!-- ════ DASHBOARD ════ -->
 <div id="dashboard">
 
   <!-- Top bar -->
@@ -495,7 +495,7 @@ function switchLayer(name) {
   activeLayerName = name;
 }
 
-apync function loadUkraineBorder() {
+async function loadUkraineBorder() {
   try {
     const r = await fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson');
     const data = await r.json();
@@ -596,7 +596,7 @@ function showDetail(row) {
     <div class="d-field">
       <div class="d-lbl">Source</div>
       <a href="${row.url}" target="_blank" rel="noopener" class="d-link">
-        0��� Voir la preuve originale
+        🔗 Voir la preuve originale
       </a>
       <div class="d-val" style="margin-top:4px;font-size:0.65rem;color:#333;word-break:break-all">${row.url}</div>
     </div>` : ''}
@@ -680,7 +680,7 @@ function runKeywordSearch(kw) {
   if (results.length > 200) {
     const more = document.createElement('div');
     more.style.cssText = 'padding:8px 12px;font-size:0.68rem;color:#444;text-align:center';
-    more.textContent = `+ ${(results.length-200).toLocaleString('fr-FR')} autres résultats — affinez lotre recherche`;
+    more.textContent = `+ ${(results.length-200).toLocaleString('fr-FR')} autres résultats — affinez votre recherche`;
     container.appendChild(more);
   }
 
