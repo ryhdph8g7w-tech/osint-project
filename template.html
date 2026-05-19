@@ -275,7 +275,7 @@
   </div>
 </div>
 
-<!-- ═══ DASHBOARD ════ -->
+<!-- ════ DASHBOARD ════ -->
 <div id="dashboard">
 
   <!-- Top bar -->
@@ -365,7 +365,7 @@
 
 // ════════════════════════════════════════════════════════
 //  COLOURS
-// ════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 const PALETTE = [
   '#f04040','#3b82f6','#22c55e','#f59e0b','#a855f7',
   '#ec4899','#06b6d4','#84cc16','#f97316','#8b5cf6',
@@ -495,7 +495,7 @@ function switchLayer(name) {
   activeLayerName = name;
 }
 
-anync function loadUkraineBorder() {
+async function loadUkraineBorder() {
   try {
     const r = await fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson');
     const data = await r.json();
@@ -909,64 +909,84 @@ function showFallback(errMsg) {
 }
 
 // ════════════════════════════════════════════════════════
-//  LIVE FETCH — CORS proxy cascade
-//  4 proxies tentés en séquence, timeout 20s chacun.
-//  Si tous échouent → file picker en dernier recours.
+//  LIVE FETCH — ArcGIS Feature Service (CIR / Bellingcat)
+//  Chargement direct, CORS ouvert, pagination automatique.
+//  Si échec → file picker en dernier recours.
 // ════════════════════════════════════════════════════════
-const SOURCE_URL = 'https://eyesonrussia.org/events.geojson';
+const ARCGIS_BASE   = 'https://services-eu1.arcgis.com/06WOSMGHsCnaFyMp/arcgis/rest/services/EoR_completed_entries/FeatureServer/0/query';
+const ARCGIS_FIELDS = 'Primary_category,Secondary_category,Description,Town_or_City,Credit,Link,latitude,longitude,TIMESTAMP,country,province,Entry_Number,OBJECTID';
+const PAGE_SIZE     = 2000;
 
-// Each function receives the raw URL and returns a fetchable URL
-const PROXY_CHAIN = [
-  // 1. Direct (works if the server relaxes CORS or future browser policy)
-  u => u,
-  // 2. corsproxy.io — fiable, sans clé
-  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-  // 3. allorigins — backup rapide
-  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-  // 4. cors.sh — troisième filet
-  u => `https://cors.sh/${u}`,
-];
-
-async function tryFetch(proxyUrl, timeoutMs = 20000) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(proxyUrl, {
-      signal: ctrl.signal,
-      headers: { Accept: 'application/json, */*' }
-    });
-    clearTimeout(timer);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    if (!data || !Array.isArray(data.features) || data.features.length === 0)
-      throw new Error('Réponse vide ou format inattendu');
-    return data;
-  } finally {
-    clearTimeout(timer);
-  }
+function parseArcGISFeature(f, idx) {
+  const p   = f.attributes || {};
+  const geo = f.geometry   || {};
+  const lat = (p.latitude  != null) ? p.latitude  : (geo.y || 0);
+  const lon = (p.longitude != null) ? p.longitude : (geo.x || 0);
+  const ts  = p.TIMESTAMP;
+  const dateISO = ts ? new Date(ts).toISOString().slice(0, 10) : '';
+  const cats    = [p.Primary_category, p.Secondary_category].filter(Boolean);
+  return {
+    id:          p.Entry_Number || String(p.OBJECTID || idx),
+    date:        dateISO,
+    dateISO:     dateISO,
+    url:         p.Link        || '',
+    status:      '',
+    credit:      p.Credit      || '',
+    description: p.Description || '',
+    country:     p.country     || '',
+    province:    p.province    || '',
+    district:    '',
+    city:        p.Town_or_City || '',
+    lat:         lat,
+    lon:         lon,
+    categories:  cats,
+    primaryCat:  cats[0] || '',
+    _idx:        idx
+  };
 }
 
 async function loadLive() {
-  for (let i = 0; i < PROXY_CHAIN.length; i++) {
-    const label = i === 0 ? 'Connexion directe…'
-                : `Source de secours ${i}/${PROXY_CHAIN.length - 1}…`;
-    const pct   = 10 + i * 18;
-    setProgress(pct, label);
+  let offset = 0, allFeatures = [];
+
+  while (true) {
+    const pct = 10 + Math.min(Math.round(70 * allFeatures.length / 32000), 70);
+    setProgress(pct, `Chargement… ${allFeatures.length.toLocaleString('fr-FR')} incidents`);
+
+    const params = new URLSearchParams({
+      f: 'json', where: '1=1', outFields: ARCGIS_FIELDS,
+      resultRecordCount: PAGE_SIZE, resultOffset: offset,
+      returnGeometry: 'true', spatialRel: 'esriSpatialRelIntersects'
+    });
+
     try {
-      const data     = await tryFetch(PROXY_CHAIN[i](SOURCE_URL));
-      const features = data.features;
-      setProgress(80, `Traitement de ${features.length.toLocaleString('fr-FR')} incidents…`);
-      await new Promise(r => setTimeout(r, 50)); // let UI breathe
-      const rows = parseGeoJSONFeatures(features);
-      setProgress(100, `✓ ${rows.length.toLocaleString('fr-FR')} incidents chargés`);
-      setTimeout(() => boot(rows), 350);
-      return; // success — stop trying
+      const r = await fetch(ARCGIS_BASE + '?' + params, { headers: { Accept: 'application/json, */*' } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d     = await r.json();
+      const batch = d.features || [];
+      if (batch.length === 0) break;
+      allFeatures = allFeatures.concat(batch);
+      if (!d.exceededTransferLimit) break;
+      offset += batch.length;
     } catch (e) {
-      console.warn(`Proxy ${i} échoué :`, e.message);
+      console.warn('ArcGIS error at offset', offset, e.message);
+      if (allFeatures.length === 0) {
+        showFallback('Aucune source disponible — charge le fichier manuellement.');
+        return;
+      }
+      break; // utilise ce qu'on a déjà
     }
   }
-  // All proxies failed
-  showFallback('Aucune source disponible — charge le fichier manuellement.');
+
+  if (allFeatures.length === 0) {
+    showFallback('Aucune source disponible — charge le fichier manuellement.');
+    return;
+  }
+
+  setProgress(85, `Traitement de ${allFeatures.length.toLocaleString('fr-FR')} incidents…`);
+  await new Promise(r => setTimeout(r, 50));
+  const rows = allFeatures.map(parseArcGISFeature);
+  setProgress(100, `✓ ${rows.length.toLocaleString('fr-FR')} incidents chargés`);
+  setTimeout(() => boot(rows), 350);
 }
 
 // ════════════════════════════════════════════════════════
